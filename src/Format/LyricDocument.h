@@ -21,12 +21,18 @@ public:
     bool saveFile();
     bool saveFileAs(const QString &fileName);
 
+    QString fileName() const;
+
+    void setDirty(bool isDirty);
     bool isDirty() const;
 
     QStandardItemModel *model() const;
     QUndoStack *undoStack() const;
     void beginTransaction(const QString &name);
     void pushEditCommand(const QModelIndex &index, const QVariant &value);
+    void pushMoveRowCommand(int sourceRow, int destinationRow);
+    void pushInsertRowCommand(int row, int time, const QString &lyric);
+    void pushDeleteRowCommand(int row);
     void commitTransaction();
 
 signals:
@@ -38,7 +44,6 @@ private:
     QList<LyricLine> getLyricLinesFromModel() const;
 
     void setFileName(const QString &fileName);
-    void setDirty(bool isDirty);
 
     QStandardItemModel *m_lyricModel;
     QUndoStack *m_undoStack;

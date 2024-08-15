@@ -1,5 +1,7 @@
 #include "LyricDocument.h"
 
+#include <algorithm>
+
 #include <QStandardItemModel>
 #include <QUndoStack>
 #include <QFile>
@@ -11,22 +13,106 @@ static LyricDocument *m_instance = nullptr;
 
 class EditCommand : public QUndoCommand {
 public:
-    EditCommand(const QModelIndex &index, const QVariant &newValue, QUndoCommand *parent = nullptr)
-            : QUndoCommand(parent), m_index(index), m_newValue(newValue), m_oldValue(m_instance->model()->data(index)) {
+    explicit EditCommand(const QModelIndex &index, const QVariant &newValue, QUndoCommand *parent = nullptr)
+    : QUndoCommand(parent), m_index(index), m_newValue(newValue), m_oldValue(m_instance->model()->data(index)) {
     }
 
     void undo() override {
-        m_instance->model()->setData(m_index, m_oldValue, Qt::EditRole);
+        m_instance->model()->setData(m_index, m_oldValue);
+        m_instance->setDirty(true);
     }
 
     void redo() override {
-        m_instance->model()->setData(m_index, m_newValue, Qt::EditRole);
+        m_instance->model()->setData(m_index, m_newValue);
+        m_instance->setDirty(true);
     }
 
 private:
     QModelIndex m_index;
     QVariant m_newValue;
     QVariant m_oldValue;
+};
+
+class MoveRowCommand : public QUndoCommand {
+public:
+    explicit MoveRowCommand(int sourceRow, int destinationRow, QUndoCommand *parent = nullptr)
+    : QUndoCommand(parent), sourceRow(sourceRow), destinationRow(destinationRow) {
+    }
+
+    void undo() override {
+        auto model = m_instance->model();
+        auto destinationTime = model->data(model->index(destinationRow, 0));
+        auto destinationLyric = model->data(model->index(destinationRow, 1));
+        model->removeRow(destinationRow);
+        model->insertRow(sourceRow);
+        model->setData(model->index(sourceRow, 0),destinationTime);
+        model->setData(model->index(sourceRow, 1), destinationLyric);
+        m_instance->setDirty(true);
+    }
+
+    void redo() override {
+        auto model = m_instance->model();
+        auto sourceTime = model->data(model->index(sourceRow, 0));
+        auto sourceLyric = model->data(model->index(sourceRow, 1));
+        model->removeRow(sourceRow);
+        model->insertRow(destinationRow);
+        model->setData(model->index(destinationRow, 0),sourceTime);
+        model->setData(model->index(destinationRow, 1), sourceLyric);
+        m_instance->setDirty(true);
+    }
+
+private:
+    int sourceRow;
+    int destinationRow;
+};
+
+class InsertRowCommand : public QUndoCommand {
+public:
+    explicit InsertRowCommand(int row, const QString &timeString, const QString &lyric, QUndoCommand *parent = nullptr)
+    : QUndoCommand(parent), row(row), timeString(timeString), lyric(lyric) {
+    }
+
+    void undo() override {
+        m_instance->model()->removeRow(row);
+        m_instance->setDirty(true);
+    }
+
+    void redo() override {
+        auto timeItem = new QStandardItem(timeString);
+        auto lyricItem = new QStandardItem(lyric);
+        m_instance->model()->insertRow(row, {timeItem, lyricItem});
+        m_instance->setDirty(true);
+    }
+
+private:
+    int row;
+    QString timeString;
+    QString lyric;
+};
+
+class DeleteRowCommand : public QUndoCommand {
+public:
+    explicit DeleteRowCommand(int row, QUndoCommand *parent = nullptr)
+    : QUndoCommand(parent), row(row), time(m_instance->model()->data(m_instance->model()->index(row, 0))), lyric(m_instance->model()->data(m_instance->model()->index(row, 1))) {
+    }
+
+    void undo() override {
+        m_instance->model()->insertRow(row);
+        m_instance->model()->setData(m_instance->model()->index(row, 0), time);
+        m_instance->model()->setData(m_instance->model()->index(row, 1), lyric);
+        m_instance->setDirty(true);
+    }
+
+    void redo() override {
+        m_instance->model()->removeRow(row);
+        m_instance->setDirty(true);
+
+    }
+
+private:
+    int row;
+    QVariant time;
+    QVariant lyric;
 };
 
 LyricDocument::LyricDocument(QObject *parent) : QObject(parent) {
@@ -88,6 +174,10 @@ bool LyricDocument::saveFileAs(const QString &fileName) {
     return true;
 }
 
+QString LyricDocument::fileName() const {
+    return m_fileName;
+}
+
 bool LyricDocument::isDirty() const {
     return m_isDirty;
 }
@@ -108,6 +198,18 @@ void LyricDocument::pushEditCommand(const QModelIndex &index, const QVariant &va
     m_undoStack->push(new EditCommand(index, value));
 }
 
+void LyricDocument::pushMoveRowCommand(int sourceRow, int destinationRow) {
+    m_undoStack->push(new MoveRowCommand(sourceRow, destinationRow));
+}
+
+void LyricDocument::pushInsertRowCommand(int row, int time, const QString &lyric) {
+    m_undoStack->push(new InsertRowCommand(row, QString::number(time), lyric));
+}
+
+void LyricDocument::pushDeleteRowCommand(int row) {
+    m_undoStack->push(new DeleteRowCommand(row));
+}
+
 void LyricDocument::commitTransaction() {
     m_undoStack->endMacro();
 }
@@ -126,6 +228,7 @@ QList<LyricLine> LyricDocument::getLyricLinesFromModel() const {
     for (int i = 0; i < m_lyricModel->rowCount(); i++) {
         ret.append({m_lyricModel->data(m_lyricModel->index(i, 0)).toInt(), m_lyricModel->data(m_lyricModel->index(i, 1)).toString()});
     }
+    std::sort(ret.begin(), ret.end());
     return ret;
 }
 

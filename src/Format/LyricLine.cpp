@@ -4,6 +4,8 @@
 #include <QList>
 #include <QRegularExpression>
 
+#include <NeoLrcEditorApp/TimeValidator.h>
+
 LyricLine::LyricLine() : d(new LyricLineData) {
 }
 
@@ -42,7 +44,7 @@ QString LyricLine::lyric() const {
 }
 
 QString LyricLine::time() const {
-    return QString::number(d->centisecond / 6000) + ":" + QString::number(d->centisecond % 6000 / 100) + "." + QString::number(d->centisecond % 100);
+    return TimeValidator::timeToString(d->centisecond);
 }
 
 QString LyricLine::toString() const {
