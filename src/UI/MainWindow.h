@@ -10,8 +10,6 @@ class QItemSelectionModel;
 class LyricDocument;
 class LyricEditorView;
 
-class LyricSortFilterProxyModel;
-
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
@@ -37,18 +35,24 @@ private:
     void undoAction();
     void redoAction();
     void insertAction();
-    void insertAtCurrentPositionAction();
     void deleteAction();
+    void setTimeAction();
+    void setTimeAndNextAction();
+    void insertEmptyLineAction();
+    void insertEmptyLineAndNextAction();
     void selectAllAction();
     void selectNoneAction();
     void quantizeAction();
     void adjustTimeAction();
+
+    void openAudioFileAction();
+    void closeAudioFileAction();
+
     LyricDocument *m_document;
 
     QTreeView *m_treeView;
     LyricEditorView *m_lyricEditorView;
     QItemSelectionModel *m_selectionModel;
-    LyricSortFilterProxyModel *m_proxyModel;
 };
 
 

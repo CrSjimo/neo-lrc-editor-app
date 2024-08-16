@@ -5,8 +5,11 @@
 
 class QStandardItemModel;
 class QUndoStack;
+class QSortFilterProxyModel;
 
 class LyricLine;
+
+class LyricSortFilterProxyModel;
 
 class LyricDocument : public QObject {
     Q_OBJECT
@@ -27,6 +30,7 @@ public:
     bool isDirty() const;
 
     QStandardItemModel *model() const;
+    QSortFilterProxyModel *proxyModel() const;
     QUndoStack *undoStack() const;
     void beginTransaction(const QString &name);
     void pushEditCommand(const QModelIndex &index, const QVariant &value);
@@ -34,6 +38,8 @@ public:
     void pushInsertRowCommand(int row, int time, const QString &lyric);
     void pushDeleteRowCommand(int row);
     void commitTransaction();
+
+    int findRowByTime(int time) const;
 
 signals:
     void fileNameChanged(const QString &fileName);
@@ -46,6 +52,7 @@ private:
     void setFileName(const QString &fileName);
 
     QStandardItemModel *m_lyricModel;
+    LyricSortFilterProxyModel *m_proxyModel;
     QUndoStack *m_undoStack;
     QString m_fileName;
     bool m_isDirty = false;

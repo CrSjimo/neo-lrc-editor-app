@@ -1,0 +1,3 @@
+[submodule "lib/talcs"]
+	path = lib/talcs
+	url = git@github.com:CrSjimo/talcs

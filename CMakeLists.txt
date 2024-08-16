@@ -49,7 +49,7 @@ qm_init_directories()
 # ----------------------------------
 add_subdirectory(src)
 
-#add_subdirectory(lib)
+add_subdirectory(lib)
 
 if(APP_BUILD_TESTS)
     add_subdirectory(tests)

@@ -5,11 +5,29 @@
 #include <QStandardItemModel>
 #include <QUndoStack>
 #include <QFile>
+#include <QSortFilterProxyModel>
 
 #include <NeoLrcEditorApp/LyricFormatIO.h>
 #include <NeoLrcEditorApp/LyricLine.h>
 
 static LyricDocument *m_instance = nullptr;
+
+class LyricSortFilterProxyModel : public QSortFilterProxyModel {
+public:
+    explicit LyricSortFilterProxyModel(QObject *parent = nullptr) : QSortFilterProxyModel(parent) {
+    }
+
+protected:
+    bool lessThan(const QModelIndex &source_left, const QModelIndex &source_right) const override {
+        auto model = LyricDocument::instance()->model();
+        auto time1 = model->data(source_left).toInt();
+        auto time2 = model->data(source_right).toInt();
+        if (time1 == time2)
+            return model->data(source_left.siblingAtColumn(1)).toString() < model->data(source_right.siblingAtColumn(1)).toString();
+        else
+            return time1 < time2;
+    }
+};
 
 class EditCommand : public QUndoCommand {
 public:
@@ -32,7 +50,6 @@ private:
     QVariant m_newValue;
     QVariant m_oldValue;
 };
-
 class MoveRowCommand : public QUndoCommand {
 public:
     explicit MoveRowCommand(int sourceRow, int destinationRow, QUndoCommand *parent = nullptr)
@@ -65,7 +82,6 @@ private:
     int sourceRow;
     int destinationRow;
 };
-
 class InsertRowCommand : public QUndoCommand {
 public:
     explicit InsertRowCommand(int row, const QString &timeString, const QString &lyric, QUndoCommand *parent = nullptr)
@@ -89,7 +105,6 @@ private:
     QString timeString;
     QString lyric;
 };
-
 class DeleteRowCommand : public QUndoCommand {
 public:
     explicit DeleteRowCommand(int row, QUndoCommand *parent = nullptr)
@@ -120,6 +135,9 @@ LyricDocument::LyricDocument(QObject *parent) : QObject(parent) {
     m_lyricModel = new QStandardItemModel(0, 2, this);
     m_lyricModel->setHeaderData(0, Qt::Horizontal, tr("Time"));
     m_lyricModel->setHeaderData(1, Qt::Horizontal, tr("Lyric"));
+    m_proxyModel = new LyricSortFilterProxyModel(this);
+    m_proxyModel->setSourceModel(m_lyricModel);
+    m_proxyModel->sort(0);
     m_undoStack = new QUndoStack(this);
 }
 
@@ -186,6 +204,10 @@ QStandardItemModel *LyricDocument::model() const {
     return m_lyricModel;
 }
 
+QSortFilterProxyModel *LyricDocument::proxyModel() const {
+    return m_proxyModel;
+}
+
 QUndoStack *LyricDocument::undoStack() const {
     return m_undoStack;
 }
@@ -195,7 +217,7 @@ void LyricDocument::beginTransaction(const QString &name) {
 }
 
 void LyricDocument::pushEditCommand(const QModelIndex &index, const QVariant &value) {
-    m_undoStack->push(new EditCommand(index, value));
+    m_undoStack->push(new EditCommand(index.model() == m_proxyModel ? m_proxyModel->mapToSource(index) : index, value));
 }
 
 void LyricDocument::pushMoveRowCommand(int sourceRow, int destinationRow) {
@@ -212,6 +234,23 @@ void LyricDocument::pushDeleteRowCommand(int row) {
 
 void LyricDocument::commitTransaction() {
     m_undoStack->endMacro();
+}
+
+int LyricDocument::findRowByTime(int time) const {
+    int count = m_proxyModel->rowCount();
+    int first = 0;
+    while (count > 0) {
+        int it = first;
+        int step = count / 2;
+        it += step;
+        if (m_proxyModel->data(m_proxyModel->index(it, 0)).toInt() < time) {
+            first = ++it;
+            count -= step + 1;
+        } else
+            count = step;
+    }
+
+    return first - 1;
 }
 
 void LyricDocument::buildModelFromLyricLines(const QList<LyricLine> &lyricLines) {

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <set>
 
 #include <QStandardItemModel>
 #include <QSplitter>
@@ -19,45 +20,19 @@
 #include <QToolBar>
 #include <QUndoStack>
 #include <QTimer>
-#include <QFormLayout>
-#include <QDoubleSpinBox>
-#include <QComboBox>
-#include <QPushButton>
 #include <QSortFilterProxyModel>
-#include <QCheckBox>
 #include <QLabel>
+
+#include <TalcsFormat/AudioFormatIO.h>
 
 #include <NeoLrcEditorApp/LyricEditorView.h>
 #include <NeoLrcEditorApp/TimeValidator.h>
 #include <NeoLrcEditorApp/LyricDocument.h>
-
-class TimeSpinBox : public QSpinBox {
-public:
-    explicit TimeSpinBox(QWidget *parent = nullptr) : QSpinBox(parent) {
-        m_timeValidator = new TimeValidator(this);
-        setMaximum(599999);
-    }
-
-protected:
-    QValidator::State validate(QString &input, int &pos) const override {
-        return m_timeValidator->validate(input, pos);
-    }
-
-    int valueFromText(const QString &text) const override {
-        return TimeValidator::stringToTime(text);
-    }
-
-    QString textFromValue(int val) const override {
-        return TimeValidator::timeToString(val);
-    }
-
-    void fixup(QString &str) const override {
-        m_timeValidator->fixup(str);
-    }
-
-private:
-    TimeValidator *m_timeValidator;
-};
+#include <NeoLrcEditorApp/PlaybackController.h>
+#include <NeoLrcEditorApp/QuantizeDialog.h>
+#include <NeoLrcEditorApp/TimeSpinBox.h>
+#include <NeoLrcEditorApp/AdjustTimeDialog.h>
+#include <NeoLrcEditorApp/ImportDialog.h>
 
 class TreeViewEditTimeDelegate : public QStyledItemDelegate {
 public:
@@ -80,14 +55,7 @@ public:
         // Determine whether inserted or modified, see MainWindow::insertAction()
         if (model->data(index, Qt::UserRole).isNull())
             LyricDocument::instance()->beginTransaction(tr("Edit Time"));
-        LyricDocument::instance()->pushEditCommand(static_cast<QAbstractProxyModel *>(model)->mapToSource(index), data);
-//        int destination = findSortedDestination(index);
-//        if (destination != index.row()) {
-//            LyricDocument::instance()->pushMoveRowCommand(index.row(), destination);
-//            QTimer::singleShot(0, [=] {
-//                m_treeView->setCurrentIndex(model->index(destination, 0));
-//            });
-//        }
+        LyricDocument::instance()->pushEditCommand(index, data);
         LyricDocument::instance()->commitTransaction();
     }
 
@@ -119,24 +87,41 @@ public:
         auto lineEdit = static_cast<QLineEdit *>(editor);
         auto data = lineEdit->text();
         LyricDocument::instance()->beginTransaction(tr("Edit Lyric"));
-        LyricDocument::instance()->pushEditCommand(static_cast<QAbstractProxyModel *>(model)->mapToSource(index), data);
+        LyricDocument::instance()->pushEditCommand(index, data);
         LyricDocument::instance()->commitTransaction();
     }
 };
 
-class LyricSortFilterProxyModel : public QSortFilterProxyModel {
+class CurrentLyricLabel : public QLabel {
 public:
-    explicit LyricSortFilterProxyModel(QObject *parent = nullptr) : QSortFilterProxyModel(parent) {
+    explicit CurrentLyricLabel(QTreeView *treeView, QWidget *parent = nullptr) : QLabel(parent), treeView(treeView) {
     }
 
+    void setRow(int row) {
+        m_row = row;
+        if (row == -1)
+            setText({});
+        else
+            setText(LyricDocument::instance()->proxyModel()->data(LyricDocument::instance()->proxyModel()->index(m_row, 1)).toString());
+    }
+
+    QTreeView *treeView;
+    int m_row = -1;
+
 protected:
-    bool lessThan(const QModelIndex &source_left, const QModelIndex &source_right) const override {
-        auto model = LyricDocument::instance()->model();
-        return model->data(source_left).toInt() < model->data(source_right).toInt();
+    void mousePressEvent(QMouseEvent *ev) override {
+        if (m_row != -1)
+            treeView->setCurrentIndex(LyricDocument::instance()->proxyModel()->index(m_row, 0));
     }
 };
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
+
+    auto playbackController = new PlaybackController(this);
+    if (!playbackController->initialize())
+        QMessageBox::critical(this, {}, tr("Cannot initialize audio"));
+
+    m_document = new LyricDocument(this);
 
     auto mainWidget = new QWidget;
     auto mainLayout = new QVBoxLayout;
@@ -150,12 +135,25 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     auto timeDelegate = new TreeViewEditTimeDelegate(m_treeView, m_treeView);
     m_treeView->setItemDelegateForColumn(0, timeDelegate);
     m_treeView->setItemDelegateForColumn(1, new TreeViewEditLyricDelegate(m_treeView));
+    m_treeView->setModel(m_document->proxyModel());
+    m_selectionModel = m_treeView->selectionModel();
     splitter->addWidget(m_treeView);
 
     m_lyricEditorView = new LyricEditorView;
     splitter->addWidget(m_lyricEditorView);
 
     mainLayout->addWidget(splitter);
+
+    auto playbackTransportLayout = new QHBoxLayout;
+    auto currentTimeLabel = new QLabel(TimeValidator::timeToString(0));
+    playbackTransportLayout->addWidget(currentTimeLabel);
+    auto timeSlider = new QSlider;
+    timeSlider->setOrientation(Qt::Horizontal);
+    timeSlider->setRange(0, 0);
+    playbackTransportLayout->addWidget(timeSlider);
+    auto totalTimeLabel = new QLabel(TimeValidator::timeToString(0));
+    playbackTransportLayout->addWidget(totalTimeLabel);
+    mainLayout->addLayout(playbackTransportLayout);
 
     auto playbackToolBar = new QToolBar;
     auto playPauseAction = playbackToolBar->addAction(style()->standardIcon(QStyle::SP_MediaPlay), tr("Play"), Qt::Key_Space);
@@ -168,15 +166,32 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
             playPauseAction->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
             playPauseAction->setText(tr("Play"));
         }
+        playbackController->setPlaying(checked);
     });
     playbackToolBar->addAction(playPauseAction);
-
+    playbackToolBar->addSeparator();
+    auto audioFileNameLabel = new QLabel;
+    playbackToolBar->addWidget(audioFileNameLabel);
     mainLayout->addWidget(playbackToolBar);
+
+    QPalette alternativePalette;
+    auto alternativeColor = alternativePalette.color(QPalette::WindowText);
+    alternativeColor.setAlpha(0x7f);
+    alternativePalette.setColor(QPalette::WindowText, alternativeColor);
+    auto previousLyricLabel = new CurrentLyricLabel(m_treeView);
+    previousLyricLabel->setPalette(alternativePalette);
+    mainLayout->addWidget(previousLyricLabel);
+    auto currentLyricLabel = new CurrentLyricLabel(m_treeView);
+    mainLayout->addWidget(currentLyricLabel);
+    auto nextLyricLabel = new CurrentLyricLabel(m_treeView);
+    nextLyricLabel->setPalette(alternativePalette);
+    mainLayout->addWidget(nextLyricLabel);
 
     mainWidget->setLayout(mainLayout);
     setCentralWidget(mainWidget);
 
     auto menuBar = new QMenuBar;
+
     auto fileMenu = menuBar->addMenu(tr("&File"));
     fileMenu->addAction(tr("&New"), QKeySequence::New, this, &MainWindow::newFileAction);
     fileMenu->addAction(tr("&Open..."), QKeySequence::Open, this, &MainWindow::openFileAction);
@@ -186,6 +201,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     fileMenu->addAction(tr("&Import..."), Qt::CTRL | Qt::Key_I, this, &MainWindow::importAction);
     fileMenu->addSeparator();
     fileMenu->addAction(tr("&Exit"), this, &MainWindow::exitAction);
+
     auto editMenu = menuBar->addMenu(tr("&Edit"));
     auto undoAction = editMenu->addAction(tr("&Undo"), QKeySequence::Undo, this, &MainWindow::undoAction);
     undoAction->setEnabled(false);
@@ -193,9 +209,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     redoAction->setEnabled(false);
     editMenu->addSeparator();
     editMenu->addAction(tr("&Insert"), Qt::Key_Insert, this, &MainWindow::insertAction);
-    editMenu->addAction(tr("Insert at Current Position"), Qt::ALT | Qt::Key_Insert, this, &MainWindow::insertAtCurrentPositionAction);
     auto deleteAction = editMenu->addAction(tr("&Delete"), Qt::Key_Delete, this, &MainWindow::deleteAction);
     deleteAction->setEnabled(false);
+    editMenu->addSeparator();
+    auto setTimeAction = editMenu->addAction(tr("Set Time"), Qt::CTRL | Qt::Key_F9, this, &MainWindow::setTimeAction);
+    auto setTimeAndNextAction = editMenu->addAction(tr("Set Time and Next"), Qt::Key_F9, this, &MainWindow::setTimeAndNextAction);
+    editMenu->addAction(tr("Insert Empty Line"), Qt::CTRL | Qt::Key_F10, this, &MainWindow::insertEmptyLineAction);
+    editMenu->addAction(tr("Insert Empty Line and Next"), Qt::Key_F10, this, &MainWindow::insertEmptyLineAndNextAction);
     editMenu->addSeparator();
     editMenu->addAction(tr("Select &All"), QKeySequence::SelectAll, this, &MainWindow::selectAllAction);
     editMenu->addAction(tr("Deselect All"), QKeySequence::Deselect, this, &MainWindow::selectNoneAction);
@@ -205,17 +225,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     auto adjustTimeAction = editMenu->addAction(tr("Ad&just Time..."), Qt::CTRL | Qt::Key_J, this, &MainWindow::adjustTimeAction);
     adjustTimeAction->setEnabled(false);
 
+    auto playbackMenu = menuBar->addMenu(tr("&Playback"));
+    playbackMenu->addAction(tr("&Open Audio File..."), this, &MainWindow::openAudioFileAction);
+    playbackMenu->addAction(tr("&Close Audio File"), this, &MainWindow::closeAudioFileAction);
+
     setMenuBar(menuBar);
 
     resize(800, 600);
-
-    m_document = new LyricDocument(this);
-    m_proxyModel = new LyricSortFilterProxyModel(this);
-    m_proxyModel->setSourceModel(m_document->model());
-    m_treeView->setModel(m_proxyModel);
-    m_proxyModel->sort(0);
-    m_selectionModel = new QItemSelectionModel(m_proxyModel, this);
-    m_treeView->setSelectionModel(m_selectionModel);
 
     connect(m_document, &LyricDocument::dirtyChanged, this, &MainWindow::updateTitle);
     connect(m_document, &LyricDocument::fileNameChanged, this, &MainWindow::updateTitle);
@@ -229,15 +245,29 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     });
 
     connect(m_selectionModel, &QItemSelectionModel::selectionChanged, this, [=] {
-        if (m_selectionModel->hasSelection()) {
-            deleteAction->setEnabled(true);
-            quantizeAction->setEnabled(true);
-            adjustTimeAction->setEnabled(true);
-        } else {
-            deleteAction->setEnabled(false);
-            quantizeAction->setEnabled(false);
-            adjustTimeAction->setEnabled(false);
-        }
+        auto flag = m_selectionModel->hasSelection();
+        deleteAction->setEnabled(flag);
+        quantizeAction->setEnabled(flag);
+        adjustTimeAction->setEnabled(flag);
+        setTimeAction->setEnabled(flag);
+        setTimeAndNextAction->setEnabled(flag);
+    });
+
+    connect(playbackController, &PlaybackController::positionTimeChanged, this, [=](int time) {
+        QSignalBlocker blocker(timeSlider);
+        timeSlider->setValue(time);
+        currentTimeLabel->setText(TimeValidator::timeToString(time));
+        auto currentRow = m_document->findRowByTime(time);
+        previousLyricLabel->setRow(qMax(-1, currentRow - 1));
+        currentLyricLabel->setRow(currentRow);
+        nextLyricLabel->setRow(currentRow + 1);
+    });
+    connect(timeSlider, &QSlider::valueChanged, playbackController, &PlaybackController::setPositionTime);
+    connect(playbackController, &PlaybackController::audioFileNameChanged, this, [=](const QString &fileName) {
+        audioFileNameLabel->setText(fileName);
+        totalTimeLabel->setText(TimeValidator::timeToString(playbackController->audioLengthTime()));
+        timeSlider->setMaximum(playbackController->audioLengthTime());
+
     });
 
     if (QApplication::arguments().isEmpty()) {
@@ -320,6 +350,17 @@ bool MainWindow::saveFileAsAction() {
 }
 
 bool MainWindow::importAction() {
+    if (!querySaveFile())
+        return false;
+    ImportDialog dlg;
+    if (dlg.exec() == QDialog::Rejected)
+        return false;
+    m_document->newFile();
+    auto lyrics = dlg.text().split('\n');
+    auto baseTime = dlg.initialTime();
+    for (int i = 0; i < lyrics.size(); i++) {
+        m_document->model()->appendRow({new QStandardItem(QString::number(baseTime + i)), new QStandardItem(lyrics[i])});
+    }
     return true;
 }
 
@@ -337,25 +378,51 @@ void MainWindow::redoAction() {
 
 void MainWindow::insertAction() {
     m_document->beginTransaction(tr("Insert"));
-    m_document->pushInsertRowCommand(m_document->model()->rowCount(), {}, {});
+    m_document->pushInsertRowCommand(m_document->model()->rowCount(), PlaybackController::instance()->positionTime(), {});
     auto index = m_document->model()->index(m_document->model()->rowCount() - 1, 0);
     m_document->model()->setData(index, 1, Qt::UserRole);
-    m_treeView->setCurrentIndex(m_proxyModel->mapFromSource(index));
-    m_treeView->edit(m_proxyModel->mapFromSource(index));
-}
-
-void MainWindow::insertAtCurrentPositionAction() {
-
+    m_treeView->setCurrentIndex(m_document->proxyModel()->mapFromSource(index));
+    m_treeView->edit(m_document->proxyModel()->mapFromSource(index));
 }
 
 void MainWindow::deleteAction() {
     m_document->beginTransaction(tr("Delete"));
     auto selectedRows = m_selectionModel->selectedRows();
+    for (auto &index : selectedRows) {
+        index = m_document->proxyModel()->mapToSource(index);
+    }
     std::sort(selectedRows.begin(), selectedRows.end());
     std::for_each(selectedRows.crbegin(), selectedRows.crend(), [=](const auto &index) {
-        m_document->pushDeleteRowCommand(m_proxyModel->mapToSource(index).row());
+        m_document->pushDeleteRowCommand(index.row());
     });
     m_document->commitTransaction();
+}
+
+void MainWindow::setTimeAction() {
+    auto currentIndex = m_treeView->currentIndex().siblingAtColumn(0);
+    m_document->beginTransaction(tr("Set Time"));
+    m_document->pushEditCommand(currentIndex, PlaybackController::instance()->positionTime());
+    m_document->commitTransaction();
+}
+
+void MainWindow::setTimeAndNextAction() {
+    setTimeAction();
+    auto currentIndex = m_treeView->currentIndex().siblingAtColumn(0);
+    m_treeView->setCurrentIndex(currentIndex.siblingAtRow(currentIndex.row() + 1));
+}
+
+void MainWindow::insertEmptyLineAction() {
+    m_document->beginTransaction(tr("Insert Empty Line"));
+    m_document->pushInsertRowCommand(m_document->model()->rowCount(), PlaybackController::instance()->positionTime(), {});
+    auto index = m_document->model()->index(m_document->model()->rowCount() - 1, 0);
+    m_document->model()->setData(index, 1, Qt::UserRole);
+    m_treeView->setCurrentIndex(m_document->proxyModel()->mapFromSource(index));
+}
+
+void MainWindow::insertEmptyLineAndNextAction() {
+    insertEmptyLineAction();
+    auto currentIndex = m_treeView->currentIndex().siblingAtColumn(0);
+    m_treeView->setCurrentIndex(currentIndex.siblingAtRow(currentIndex.row() + 1));
 }
 
 void MainWindow::selectAllAction() {
@@ -367,110 +434,83 @@ void MainWindow::selectNoneAction() {
 }
 
 void MainWindow::quantizeAction() {
-    QDialog dlg;
-    auto mainLayout = new QVBoxLayout;
-    auto formLayout = new QFormLayout;
-    auto tempoSpinBox = new QDoubleSpinBox;
-    tempoSpinBox->setRange(1.0, std::numeric_limits<double>::max());
-    tempoSpinBox->setValue(120.0);
-    formLayout->addRow(tr("&Tempo"), tempoSpinBox);
-    auto alignComboBox = new QComboBox;
-    alignComboBox->addItem(tr("Whole note"), 0.25);
-    alignComboBox->addItem(tr("Half note"), 0.5);
-    alignComboBox->addItem(tr("Half note triplet"), 0.75);
-    alignComboBox->addItem(tr("Quarter note"), 1);
-    alignComboBox->addItem(tr("Quarter note triplet"), 1.5);
-    alignComboBox->addItem(tr("Eighth note"), 2);
-    alignComboBox->addItem(tr("Eighth note triplet"), 3);
-    alignComboBox->addItem(tr("1/16 note"), 4);
-    alignComboBox->addItem(tr("1/16 note triplet"), 6);
-    alignComboBox->addItem(tr("1/32 note"), 8);
-    alignComboBox->addItem(tr("1/32 note triplet"), 12);
-    formLayout->addRow(tr("&Alignment"), alignComboBox);
-    mainLayout->addLayout(formLayout);
-    auto buttonLayout = new QHBoxLayout;
-    buttonLayout->addStretch();
-    auto okButton = new QPushButton(tr("OK"));
-    buttonLayout->addWidget(okButton);
-    auto cancelButton = new QPushButton(tr("Cancel"));
-    buttonLayout->addWidget(cancelButton);
-    mainLayout->addLayout(buttonLayout);
-
-    dlg.setLayout(mainLayout);
-    dlg.setWindowTitle(tr("Quantize"));
-
-    connect(okButton, &QAbstractButton::clicked, &dlg, &QDialog::accept);
-    connect(cancelButton, &QAbstractButton::clicked, &dlg, &QDialog::reject);
-
+    QuantizeDialog dlg;
     if (dlg.exec() == QDialog::Rejected)
         return;
-
-    auto tempo = tempoSpinBox->value();
-    auto ratio = alignComboBox->currentData().toDouble();
-    auto div = 6000.0 / tempo / ratio;
+    auto div = dlg.div();
 
     m_document->beginTransaction(tr("Quantize"));
     for (const auto &index : m_selectionModel->selectedRows()) {
         auto oldTime = index.model()->data(index).toInt();
         auto newTime = static_cast<int>(std::round(std::round(oldTime / div) * div));
-        m_document->pushEditCommand(m_proxyModel->mapToSource(index), newTime);
+        m_document->pushEditCommand(index, newTime);
     }
     m_document->commitTransaction();
 
 }
 
 void MainWindow::adjustTimeAction() {
-    QDialog dlg;
-    auto mainLayout = new QVBoxLayout;
-
-    auto formLayout = new QFormLayout;
-    auto multiplyRatioSpinBox = new QDoubleSpinBox;
-    multiplyRatioSpinBox->setRange(std::numeric_limits<double>::lowest(), std::numeric_limits<double>::max());
-    multiplyRatioSpinBox->setValue(1.0);
-    formLayout->addRow(tr("&Multiply"), multiplyRatioSpinBox);
-    auto timeLayout = new QHBoxLayout;
-    auto offsetSpinBox = new TimeSpinBox;
-    timeLayout->addWidget(offsetSpinBox);
-    auto backwardCheckBox = new QCheckBox(tr("&Backward"));
-    timeLayout->addWidget(backwardCheckBox);
-    auto offsetLabel = new QLabel(tr("&Offset (post multiply)"));
-    offsetLabel->setBuddy(offsetSpinBox);
-    formLayout->addRow(offsetLabel, timeLayout);
-    mainLayout->addLayout(formLayout);
-
-    auto buttonLayout = new QHBoxLayout;
-    buttonLayout->addStretch();
-    auto okButton = new QPushButton(tr("OK"));
-    buttonLayout->addWidget(okButton);
-    auto cancelButton = new QPushButton(tr("Cancel"));
-    buttonLayout->addWidget(cancelButton);
-    mainLayout->addLayout(buttonLayout);
-
-    dlg.setLayout(mainLayout);
-    dlg.setWindowTitle(tr("Adjust Time"));
-
-    connect(okButton, &QAbstractButton::clicked, &dlg, &QDialog::accept);
-    connect(cancelButton, &QAbstractButton::clicked, &dlg, &QDialog::reject);
-
+    AdjustTimeDialog dlg;
     retry:
     if (dlg.exec() == QDialog::Rejected)
         return;
 
     QHash<QModelIndex, int> newTimeDict;
-    auto ratio = multiplyRatioSpinBox->value();
-    auto offset = (backwardCheckBox->isChecked() ? -1 : 1) * offsetSpinBox->value();
+    auto ratio = dlg.ratio();
+    auto offset = dlg.offset();
     for (const auto &index : m_selectionModel->selectedRows()) {
         auto oldTime = index.model()->data(index).toInt();
         auto newTime = static_cast<int>(std::round(oldTime * ratio + offset));
         if (newTime < 0) {
-            QMessageBox::warning(this, {}, "Time becomes negative after adjustment. Please Retry.");
+            QMessageBox::warning(this, {}, "Time becomes negative after adjustment. Please retry.");
             goto retry;
         }
-        newTimeDict.insert(index, newTime);
+        newTimeDict.insert(m_document->proxyModel()->mapToSource(index), newTime);
     }
     m_document->beginTransaction(tr("Adjust Time"));
     std::for_each(newTimeDict.constKeyValueBegin(), newTimeDict.constKeyValueEnd(), [=](const auto &pair) {
-        m_document->pushEditCommand(m_proxyModel->mapToSource(pair.first), pair.second);
+        m_document->pushEditCommand(pair.first, pair.second);
     });
     m_document->commitTransaction();
+}
+
+void MainWindow::openAudioFileAction() {
+    static auto filters = ([] {
+        QStringList ret;
+        std::set<QString> extensions;
+        for (const auto &fmtInfo : talcs::AudioFormatIO::availableFormats()) {
+            QStringList fmtExtensions;
+            fmtExtensions.append(fmtInfo.extension);
+            if (fmtInfo.extension == "raw") {
+                continue;
+            }
+            for (const auto &subtypeInfo : fmtInfo.subtypes) {
+                fmtExtensions += subtypeInfo.extensions;
+            }
+            extensions.insert(fmtExtensions.cbegin(), fmtExtensions.cend());
+            std::transform(fmtExtensions.cbegin(), fmtExtensions.cend(), fmtExtensions.begin(), [](const QString &extension) {
+                return "*." + extension;
+            });
+            ret.append(QString("%1 (%2)").arg(fmtInfo.name, fmtExtensions.join(" ")));
+        }
+        QStringList allSupportedFileExtensions;
+        allSupportedFileExtensions.reserve(extensions.size());
+        std::transform(extensions.cbegin(), extensions.cend(), std::back_inserter(allSupportedFileExtensions), [](const QString &extension) {
+            return "*." + extension;
+        });
+        ret.prepend(tr("All supported files (%1)").arg(allSupportedFileExtensions.join(" ")));
+        return ret.join(";;");
+    })();
+    auto fileName = QFileDialog::getOpenFileName(this, {}, {}, filters);
+    if (fileName.isEmpty())
+        return;
+    if (!PlaybackController::instance()->openAudioFile(fileName)) {
+        QMessageBox::critical(this, {}, tr("Cannot open audio file %1").arg(fileName));
+        return;
+    }
+}
+
+void MainWindow::closeAudioFileAction() {
+    Q_UNUSED(this);
+    PlaybackController::instance()->closeAudioFile();
 }
