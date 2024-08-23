@@ -34,9 +34,11 @@
 #include <NeoLrcEditorApp/AdjustTimeDialog.h>
 #include <NeoLrcEditorApp/ImportDialog.h>
 
+static MainWindow *m_instance = nullptr;
+
 class TreeViewEditTimeDelegate : public QStyledItemDelegate {
 public:
-    explicit TreeViewEditTimeDelegate(QTreeView *treeView, QObject *parent = nullptr) : QStyledItemDelegate(parent), m_treeView(treeView) {
+    explicit TreeViewEditTimeDelegate(QObject *parent = nullptr) : QStyledItemDelegate(parent) {
     }
 
     QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &option, const QModelIndex &index) const override {
@@ -62,8 +64,6 @@ public:
     QString displayText(const QVariant &value, const QLocale &locale) const override {
         return TimeValidator::timeToString(value.toInt());
     }
-
-    QTreeView *m_treeView;
 };
 
 class TreeViewEditLyricDelegate : public QStyledItemDelegate {
@@ -94,7 +94,7 @@ public:
 
 class CurrentLyricLabel : public QLabel {
 public:
-    explicit CurrentLyricLabel(QTreeView *treeView, QWidget *parent = nullptr) : QLabel(parent), treeView(treeView) {
+    explicit CurrentLyricLabel(QWidget *parent = nullptr) : QLabel(parent) {
     }
 
     void setRow(int row) {
@@ -105,17 +105,17 @@ public:
             setText(LyricDocument::instance()->proxyModel()->data(LyricDocument::instance()->proxyModel()->index(m_row, 1)).toString());
     }
 
-    QTreeView *treeView;
     int m_row = -1;
 
 protected:
     void mousePressEvent(QMouseEvent *ev) override {
         if (m_row != -1)
-            treeView->setCurrentIndex(LyricDocument::instance()->proxyModel()->index(m_row, 0));
+            m_instance->treeView()->setCurrentIndex(LyricDocument::instance()->proxyModel()->index(m_row, 0));
     }
 };
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
+    m_instance = this;
 
     auto playbackController = new PlaybackController(this);
     if (!playbackController->initialize())
@@ -132,7 +132,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     m_treeView = new QTreeView;
     m_treeView->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_treeView->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    auto timeDelegate = new TreeViewEditTimeDelegate(m_treeView, m_treeView);
+    auto timeDelegate = new TreeViewEditTimeDelegate(m_treeView);
     m_treeView->setItemDelegateForColumn(0, timeDelegate);
     m_treeView->setItemDelegateForColumn(1, new TreeViewEditLyricDelegate(m_treeView));
     m_treeView->setModel(m_document->proxyModel());
@@ -178,12 +178,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     auto alternativeColor = alternativePalette.color(QPalette::WindowText);
     alternativeColor.setAlpha(0x7f);
     alternativePalette.setColor(QPalette::WindowText, alternativeColor);
-    auto previousLyricLabel = new CurrentLyricLabel(m_treeView);
+    auto previousLyricLabel = new CurrentLyricLabel;
     previousLyricLabel->setPalette(alternativePalette);
     mainLayout->addWidget(previousLyricLabel);
-    auto currentLyricLabel = new CurrentLyricLabel(m_treeView);
+    auto currentLyricLabel = new CurrentLyricLabel;
     mainLayout->addWidget(currentLyricLabel);
-    auto nextLyricLabel = new CurrentLyricLabel(m_treeView);
+    auto nextLyricLabel = new CurrentLyricLabel;
     nextLyricLabel->setPalette(alternativePalette);
     mainLayout->addWidget(nextLyricLabel);
 
@@ -226,8 +226,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     adjustTimeAction->setEnabled(false);
 
     auto playbackMenu = menuBar->addMenu(tr("&Playback"));
-    playbackMenu->addAction(tr("&Open Audio File..."), this, &MainWindow::openAudioFileAction);
-    playbackMenu->addAction(tr("&Close Audio File"), this, &MainWindow::closeAudioFileAction);
+    playbackMenu->addAction(tr("&Open Audio File..."), Qt::CTRL | Qt::ALT | Qt::Key_O, this, &MainWindow::openAudioFileAction);
+    playbackMenu->addAction(tr("&Close Audio File"), Qt::CTRL | Qt::ALT | Qt::Key_W , this, &MainWindow::closeAudioFileAction);
 
     setMenuBar(menuBar);
 
@@ -280,7 +280,17 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
 }
 
-MainWindow::~MainWindow() = default;
+MainWindow::~MainWindow() {
+    m_instance = nullptr;
+}
+
+MainWindow *MainWindow::instance() {
+    return m_instance;
+}
+
+QTreeView *MainWindow::treeView() const {
+    return m_treeView;
+}
 
 void MainWindow::updateTitle() {
     setWindowTitle(QString("%1 - %2%3").arg(
@@ -414,8 +424,8 @@ void MainWindow::setTimeAndNextAction() {
 void MainWindow::insertEmptyLineAction() {
     m_document->beginTransaction(tr("Insert Empty Line"));
     m_document->pushInsertRowCommand(m_document->model()->rowCount(), PlaybackController::instance()->positionTime(), {});
+    m_document->commitTransaction();
     auto index = m_document->model()->index(m_document->model()->rowCount() - 1, 0);
-    m_document->model()->setData(index, 1, Qt::UserRole);
     m_treeView->setCurrentIndex(m_document->proxyModel()->mapFromSource(index));
 }
 
@@ -507,6 +517,17 @@ void MainWindow::openAudioFileAction() {
     if (!PlaybackController::instance()->openAudioFile(fileName)) {
         QMessageBox::critical(this, {}, tr("Cannot open audio file %1").arg(fileName));
         return;
+    }
+    auto lyricFileName = QFileInfo(fileName).dir().filePath(QFileInfo(fileName).baseName() + QStringLiteral(".lrc"));
+    if (LyricDocument::instance()->fileName() != lyricFileName) {
+        if (!QFileInfo(lyricFileName).isFile())
+            return;
+        if (QMessageBox::question(this, {}, tr("Also open %1?").arg(lyricFileName)) == QMessageBox::No)
+            return;
+        if (!m_document->openFile(lyricFileName)) {
+            QMessageBox::critical(this, {}, tr("Cannot open file %1").arg(fileName));
+            return;
+        }
     }
 }
 

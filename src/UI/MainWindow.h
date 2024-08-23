@@ -16,6 +16,10 @@ public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
 
+    static MainWindow *instance();
+
+    QTreeView *treeView() const;
+
 protected:
     void closeEvent(QCloseEvent *event) override;
 

@@ -10,6 +10,7 @@ namespace talcs {
     class AudioSourcePlayback;
     class TransportAudioSource;
     class AudioFormatInputSource;
+    class WaveformPainter;
 }
 
 class QFile;
@@ -36,6 +37,8 @@ public:
     void setPositionTime(int time);
     int positionTime() const;
 
+    talcs::WaveformPainter *waveformPainter() const;
+
 signals:
     void audioFileNameChanged(const QString &fileName);
     void playingChanged(bool isPlaying);
@@ -47,6 +50,10 @@ private:
     std::unique_ptr<talcs::TransportAudioSource> m_transportAudioSource;
     std::unique_ptr<talcs::AudioSourcePlayback> m_playback;
     std::unique_ptr<talcs::OutputContext> m_outputContext;
+
+    std::unique_ptr<talcs::WaveformPainter> m_waveformPainter;
+    std::unique_ptr<QFile> m_replicaAudioFile;
+    std::unique_ptr<talcs::AudioFormatInputSource> m_replicaAudioFormatInputSource;
 
     bool m_isPlaying = false;
     int m_positionTime = 0;

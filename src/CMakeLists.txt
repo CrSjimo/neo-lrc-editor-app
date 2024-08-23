@@ -128,6 +128,6 @@ file(GLOB_RECURSE _src *.h *.cpp)
 app_add_library(${PROJECT_NAME} AUTOGEN
     SOURCES ${_src}
     QT_LINKS Core Gui Widgets
-    LINKS_PRIVATE talcs::Core talcs::Device talcs::Format
+    LINKS_PRIVATE talcs::Core talcs::Device talcs::Format talcs::Gui
     QT_INCLUDE_PRIVATE Core Gui Widgets
 )
