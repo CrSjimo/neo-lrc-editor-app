@@ -236,6 +236,14 @@ void LyricDocument::commitTransaction() {
     m_undoStack->endMacro();
 }
 
+void LyricDocument::abortTransaction() {
+    m_undoStack->endMacro();
+    auto command = const_cast<QUndoCommand *>(m_undoStack->command(m_undoStack->count() - 1));
+    command->setObsolete(true);
+    command->undo();
+    m_undoStack->undo();
+}
+
 int LyricDocument::findRowByTime(int time) const {
     int count = m_proxyModel->rowCount();
     int first = 0;

@@ -127,7 +127,7 @@ endif()
 file(GLOB_RECURSE _src *.h *.cpp)
 app_add_library(${PROJECT_NAME} AUTOGEN
     SOURCES ${_src}
-    QT_LINKS Core Gui Widgets
+    QT_LINKS Core Gui Widgets Qml
     LINKS_PRIVATE talcs::Core talcs::Device talcs::Format talcs::Gui
-    QT_INCLUDE_PRIVATE Core Gui Widgets
+    QT_INCLUDE_PRIVATE Core Gui Widgets Qml
 )

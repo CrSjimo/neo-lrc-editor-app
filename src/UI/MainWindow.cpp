@@ -22,6 +22,10 @@
 #include <QTimer>
 #include <QSortFilterProxyModel>
 #include <QLabel>
+#include <QStandardPaths>
+#include <QDir>
+#include <QDesktopServices>
+#include <QJSEngine>
 
 #include <TalcsFormat/AudioFormatIO.h>
 
@@ -33,6 +37,7 @@
 #include <NeoLrcEditorApp/TimeSpinBox.h>
 #include <NeoLrcEditorApp/AdjustTimeDialog.h>
 #include <NeoLrcEditorApp/ImportDialog.h>
+#include <NeoLrcEditorApp/DocumentObject.h>
 
 static MainWindow *m_instance = nullptr;
 
@@ -229,6 +234,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     playbackMenu->addAction(tr("&Open Audio File..."), Qt::CTRL | Qt::ALT | Qt::Key_O, this, &MainWindow::openAudioFileAction);
     playbackMenu->addAction(tr("&Close Audio File"), Qt::CTRL | Qt::ALT | Qt::Key_W , this, &MainWindow::closeAudioFileAction);
 
+    m_batchProcessMenu = menuBar->addMenu(tr("&Batch Process"));
+    m_batchProcessMenu->addAction(tr("&Reload Scripts"), this, &MainWindow::reloadScriptsAction);
+    m_batchProcessMenu->addAction(tr("&Open Script Directory"), this, &MainWindow::openScriptDirAction);
+    m_batchProcessMenu->addSeparator();
+
     setMenuBar(menuBar);
 
     resize(800, 600);
@@ -277,6 +287,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     }
 
     updateTitle();
+
+    reloadScriptsAction();
+    m_engine = new QJSEngine(this);
+    m_engine->installExtensions(QJSEngine::ConsoleExtension);
+    m_engine->globalObject().setProperty("document", m_engine->newQObject(new DocumentObject));
 
 }
 
@@ -532,6 +547,51 @@ void MainWindow::openAudioFileAction() {
 }
 
 void MainWindow::closeAudioFileAction() {
-    Q_UNUSED(this);
+    Q_UNUSED(this)
     PlaybackController::instance()->closeAudioFile();
+}
+
+static const QDir scriptDir = QDir(QStandardPaths::standardLocations(QStandardPaths::DocumentsLocation)[0]).filePath("NeoLrcEditorApp Scripts");
+
+void MainWindow::reloadScriptsAction() {
+    if (!scriptDir.exists()) {
+        scriptDir.mkdir(".");
+    }
+    bool flag = false;
+    for (auto action : m_batchProcessMenu->actions()) {
+        if (action->isSeparator()) {
+            flag = true;
+        } else {
+            if (!flag)
+                continue;
+            m_batchProcessMenu->removeAction(action);
+        }
+
+    }
+    for (const auto &scriptFileInfo : scriptDir.entryInfoList({"*.js"}, QDir::Files)) {
+        m_batchProcessMenu->addAction(scriptFileInfo.baseName(), this, [=] {
+            executeScript(scriptFileInfo.absoluteFilePath());
+        });
+    }
+}
+
+void MainWindow::openScriptDirAction() {
+    Q_UNUSED(this)
+    QDesktopServices::openUrl(QUrl::fromLocalFile(scriptDir.canonicalPath()));
+}
+
+void MainWindow::executeScript(const QString &fileName) {
+    QFile f(fileName);
+    if (!f.open(QIODevice::ReadOnly)) {
+        QMessageBox::critical(this, {}, tr("Cannot open script file %1").arg(fileName));
+        return;
+    }
+    LyricDocument::instance()->beginTransaction(tr("Script %1").arg(QFileInfo(fileName).baseName()));
+    auto ret = m_engine->evaluate(f.readAll(), fileName);
+    if (ret.isError()) {
+        QMessageBox::critical(this, tr("Script Error"), ret.toString() + "\n" + ret.property("stack").toString());
+        LyricDocument::instance()->abortTransaction();
+        return;
+    }
+    LyricDocument::instance()->commitTransaction();
 }

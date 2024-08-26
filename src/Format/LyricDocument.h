@@ -38,6 +38,7 @@ public:
     void pushInsertRowCommand(int row, int time, const QString &lyric);
     void pushDeleteRowCommand(int row);
     void commitTransaction();
+    void abortTransaction();
 
     int findRowByTime(int time) const;
 

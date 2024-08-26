@@ -6,6 +6,7 @@
 class QTreeView;
 class QToolBar;
 class QItemSelectionModel;
+class QJSEngine;
 
 class LyricDocument;
 class LyricEditorView;
@@ -52,11 +53,18 @@ private:
     void openAudioFileAction();
     void closeAudioFileAction();
 
+    void reloadScriptsAction();
+    void openScriptDirAction();
+    void executeScript(const QString &fileName);
+
     LyricDocument *m_document;
 
     QTreeView *m_treeView;
     LyricEditorView *m_lyricEditorView;
     QItemSelectionModel *m_selectionModel;
+
+    QMenu *m_batchProcessMenu;
+    QJSEngine *m_engine;
 };
 
 
