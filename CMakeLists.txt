@@ -41,7 +41,7 @@ set(APP_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # ----------------------------------
 find_package(qmsetup REQUIRED)
 
-qm_import(Filesystem)
+qm_import(Filesystem Deploy)
 qm_init_directories()
 
 # ----------------------------------

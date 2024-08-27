@@ -58,12 +58,47 @@ macro(app_add_library _target)
 
     set(_install_options)
 
+    qm_win_record_deps(NeoLrcEditorApp)
+
     if(APP_INSTALL)
         install(TARGETS ${_target}
             EXPORT ${APP_INSTALL_NAME}Targets
             RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" OPTIONAL
             LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}" OPTIONAL
             ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}" OPTIONAL
+        )
+
+        set(_plugins)
+
+        if(QT_VERSION_MAJOR EQUAL 5)
+            # Qt5
+            list(APPEND _plugins
+                bearer/qgenericbearer
+                iconengines/qsvgicon
+                imageformats/q*
+            )
+        else()
+            # Qt6
+            list(APPEND _plugins
+                generic/qtuiotouchplugin
+                iconengines/qsvgicon
+                imageformats/q*
+                networkinformation/qnetworklistmanager
+                tls/q*
+            )
+        endif()
+
+        list(APPEND _plugins
+            platforms/qwindows
+            styles/qwindowsvistastyle
+        )
+
+        qm_deploy_directory("${CMAKE_INSTALL_PREFIX}"
+            PLUGINS ${_plugins}
+            LIBRARY_DIR bin
+            PLUGIN_DIR bin/plugins
+            EXTRA_SEARCHING_PATHS ${QMSETUP_BUILD_DIR}/bin
+            VERBOSE
         )
 
         target_include_directories(${_target} PUBLIC
@@ -119,7 +154,6 @@ if(APP_INSTALL)
     # Install cmake targets files
     install(EXPORT ${APP_INSTALL_NAME}Targets
         FILE "${APP_INSTALL_NAME}Targets.cmake"
-        NAMESPACE talcs::
         DESTINATION ${_install_dir}
     )
 endif()
@@ -131,3 +165,7 @@ app_add_library(${PROJECT_NAME} AUTOGEN
     LINKS_PRIVATE talcs::Core talcs::Device talcs::Format talcs::Gui
     QT_INCLUDE_PRIVATE Core Gui Widgets Qml
 )
+
+if (CMAKE_BUILD_TYPE STREQUAL "Release")
+    set_target_properties(${PROJECT_NAME} PROPERTIES WIN32_EXECUTABLE TRUE)
+endif()
