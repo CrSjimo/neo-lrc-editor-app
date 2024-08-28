@@ -69,28 +69,25 @@ macro(app_add_library _target)
         )
 
         set(_plugins)
-
-        if(QT_VERSION_MAJOR EQUAL 5)
-            # Qt5
-            list(APPEND _plugins
-                bearer/qgenericbearer
-                iconengines/qsvgicon
-                imageformats/q*
-            )
-        else()
-            # Qt6
-            list(APPEND _plugins
-                generic/qtuiotouchplugin
-                iconengines/qsvgicon
-                imageformats/q*
-                networkinformation/qnetworklistmanager
-                tls/q*
-            )
-        endif()
+        # Qt6
+        list(APPEND _plugins
+            generic/qtuiotouchplugin
+            iconengines/qsvgicon
+            imageformats/q*
+            networkinformation/qnetworklistmanager
+            tls/q*
+        )
 
         list(APPEND _plugins
             platforms/qwindows
             styles/qwindowsvistastyle
+        )
+
+        qm_add_copy_command(${_target}
+            SOURCES ../LICENSE
+            DESTINATION ../share
+            INSTALL_DIR .
+            VERBOSE
         )
 
         qm_deploy_directory("${CMAKE_INSTALL_PREFIX}"
