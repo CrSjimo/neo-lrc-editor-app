@@ -8,6 +8,8 @@ This application is a small university project. See [BUAA-Soft-2024-Summer/Soft-
 
 # Documentation
 
+[Neo LRC Editor App 开发文档](doc/Neo LRC Editor App 开发文档.md) (Simplified Chinese)
+
 [User Manual](doc/user-manual.md) (Simplified Chinese)
 
 [API](doc/api.md) (Simplified Chinese)
