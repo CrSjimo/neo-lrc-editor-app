@@ -34,6 +34,7 @@ public:
     QUndoStack *undoStack() const;
     void beginTransaction(const QString &name);
     void pushEditCommand(const QModelIndex &index, const QVariant &value);
+    void pushEditCommand(const QModelIndex &index, const QVariant &value, const QVariant &previousValue);
     void pushMoveRowCommand(int sourceRow, int destinationRow);
     void pushInsertRowCommand(int row, int time, const QString &lyric);
     void pushDeleteRowCommand(int row);

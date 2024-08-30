@@ -31,8 +31,8 @@ protected:
 
 class EditCommand : public QUndoCommand {
 public:
-    explicit EditCommand(const QModelIndex &index, const QVariant &newValue, QUndoCommand *parent = nullptr)
-    : QUndoCommand(parent), m_index(index), m_newValue(newValue), m_oldValue(m_instance->model()->data(index)) {
+    explicit EditCommand(const QModelIndex &index, const QVariant &newValue, const QVariant &oldValue, QUndoCommand *parent = nullptr)
+    : QUndoCommand(parent), m_index(index), m_newValue(newValue), m_oldValue(oldValue) {
     }
 
     void undo() override {
@@ -217,7 +217,11 @@ void LyricDocument::beginTransaction(const QString &name) {
 }
 
 void LyricDocument::pushEditCommand(const QModelIndex &index, const QVariant &value) {
-    m_undoStack->push(new EditCommand(index.model() == m_proxyModel ? m_proxyModel->mapToSource(index) : index, value));
+    pushEditCommand(index, value, index.model()->data(index));
+}
+
+void LyricDocument::pushEditCommand(const QModelIndex &index, const QVariant &value, const QVariant &previousValue) {
+    m_undoStack->push(new EditCommand(index.model() == m_proxyModel ? m_proxyModel->mapToSource(index) : index, value, previousValue));
 }
 
 void LyricDocument::pushMoveRowCommand(int sourceRow, int destinationRow) {

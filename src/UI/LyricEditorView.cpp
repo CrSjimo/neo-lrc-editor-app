@@ -75,7 +75,11 @@ public:
             auto newPos = value.toPointF();
             newPos.setX(qMax(newPos.x(), 0.0));
             newPos.setY(0);
+            LyricDocument::instance()->model()->setData(index, m_view->getTimeFromItemX(x()));
             auto affectedItem = previousItem();
+            if (affectedItem)
+                affectedItem->update();
+            affectedItem = nextItem();
             if (affectedItem)
                 affectedItem->update();
             return newPos;
@@ -162,6 +166,7 @@ public:
 protected:
     void mousePressEvent(QGraphicsSceneMouseEvent *event) override {
         QGraphicsItem::mousePressEvent(event);
+        m_timeBeforeDragging = time();
         MainWindow::instance()->treeView()->setCurrentIndex(LyricDocument::instance()->proxyModel()->mapFromSource(index));
         update();
     }
@@ -170,9 +175,9 @@ protected:
         QGraphicsItem::mouseReleaseEvent(event);
         MainWindow::instance()->treeView()->setCurrentIndex(LyricDocument::instance()->proxyModel()->mapFromSource(index));
         auto newTime = m_view->getTimeFromItemX(x());
-        if (newTime != time()) {
+        if (newTime != m_timeBeforeDragging) {
             LyricDocument::instance()->beginTransaction("Edit Time");
-            LyricDocument::instance()->pushEditCommand(index, newTime);
+            LyricDocument::instance()->pushEditCommand(index, newTime, m_timeBeforeDragging);
             LyricDocument::instance()->commitTransaction();
         }
         update();
@@ -206,6 +211,9 @@ protected:
             LyricDocument::instance()->commitTransaction();
         }
     }
+
+private:
+    int m_timeBeforeDragging = 0;
 };
 
 class WaveformItem : public QGraphicsItem {
@@ -333,9 +341,11 @@ LyricEditorView::LyricEditorView(QWidget *parent) : QGraphicsView(parent) {
 
     connect(PlaybackController::instance(), &PlaybackController::positionTimeChanged, this, [=](int time) {
         m_playheadItem->setX(getItemXFromTime(time));
-        if (visibleRect().right() - m_playheadItem->x() <= 50 || m_playheadItem->x() - visibleRect().left() < 50) {
-            auto center = visibleRect().center();
-            centerOn(2 * m_playheadItem->x() - center.x(), center.y());
+        auto rect = visibleRect();
+        if (rect.right() - m_playheadItem->x() <= 50) {
+            centerOn(m_playheadItem->x() + rect.width() / 2 - 50, rect.center().y());
+        } else if (m_playheadItem->x() - rect.left() < 50) {
+            centerOn(m_playheadItem->x() - rect.width() / 2 + 50, rect.center().y());
         }
     });
 }

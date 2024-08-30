@@ -5,6 +5,7 @@
 #include <set>
 
 #include <QStandardItemModel>
+#include <QStyleHints>
 #include <QSplitter>
 #include <QTreeView>
 #include <QMenuBar>
@@ -102,12 +103,16 @@ public:
     explicit CurrentLyricLabel(QWidget *parent = nullptr) : QLabel(parent) {
     }
 
-    void setRow(int row) {
-        m_row = row;
-        if (row == -1)
+    void updateText() {
+        if (m_row == -1)
             setText({});
         else
             setText(LyricDocument::instance()->proxyModel()->data(LyricDocument::instance()->proxyModel()->index(m_row, 1)).toString());
+    }
+
+    void setRow(int row) {
+        m_row = row;
+        updateText();
     }
 
     int m_row = -1;
@@ -134,6 +139,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     auto splitter = new QSplitter;
     splitter->setOrientation(Qt::Vertical);
 
+    auto upperAreaSplitter = new QSplitter;
+    upperAreaSplitter->setOrientation(Qt::Horizontal);
+
     m_treeView = new QTreeView;
     m_treeView->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_treeView->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -142,7 +150,17 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     m_treeView->setItemDelegateForColumn(1, new TreeViewEditLyricDelegate(m_treeView));
     m_treeView->setModel(m_document->proxyModel());
     m_selectionModel = m_treeView->selectionModel();
-    splitter->addWidget(m_treeView);
+    upperAreaSplitter->addWidget(m_treeView);
+
+    auto lyricPreviewWidget = new QWidget;
+    auto lyricPreviewLayout = new QVBoxLayout;
+    lyricPreviewWidget->setLayout(lyricPreviewLayout);
+    upperAreaSplitter->addWidget(lyricPreviewWidget);
+    upperAreaSplitter->setSizes(QList<int>({std::numeric_limits<int>::max(), std::numeric_limits<int>::max()}));
+
+    splitter->addWidget(upperAreaSplitter);
+    splitter->setSizes(QList<int>({std::numeric_limits<int>::max(), std::numeric_limits<int>::max()}));
+
 
     m_lyricEditorView = new LyricEditorView;
     splitter->addWidget(m_lyricEditorView);
@@ -161,14 +179,24 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     mainLayout->addLayout(playbackTransportLayout);
 
     auto playbackToolBar = new QToolBar;
-    auto playPauseAction = playbackToolBar->addAction(style()->standardIcon(QStyle::SP_MediaPlay), tr("Play"), Qt::Key_Space);
+    static auto playIcon = QApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark ? [=] {
+        auto image = style()->standardPixmap(QStyle::SP_MediaPlay).toImage();
+        image.invertPixels();
+        return QIcon(QPixmap::fromImage(image));
+    }() : style()->standardIcon(QStyle::SP_MediaPlay);
+    static auto pauseIcon = QApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark ? [=] {
+        auto image = style()->standardPixmap(QStyle::SP_MediaPause).toImage();
+        image.invertPixels();
+        return QIcon(QPixmap::fromImage(image));
+    }() : style()->standardIcon(QStyle::SP_MediaPause);
+    auto playPauseAction = playbackToolBar->addAction(playIcon, tr("Play"), Qt::Key_Space);
     playPauseAction->setCheckable(true);
     connect(playPauseAction, &QAction::toggled, this, [=](bool checked) {
         if (checked) {
-            playPauseAction->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
+            playPauseAction->setIcon(pauseIcon);
             playPauseAction->setText(tr("Pause"));
         } else {
-            playPauseAction->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
+            playPauseAction->setIcon(playIcon);
             playPauseAction->setText(tr("Play"));
         }
         playbackController->setPlaying(checked);
@@ -183,14 +211,19 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     auto alternativeColor = alternativePalette.color(QPalette::WindowText);
     alternativeColor.setAlpha(0x7f);
     alternativePalette.setColor(QPalette::WindowText, alternativeColor);
+    QFont font;
+    font.setPointSize(24);
     auto previousLyricLabel = new CurrentLyricLabel;
+    previousLyricLabel->setFont(font);
     previousLyricLabel->setPalette(alternativePalette);
-    mainLayout->addWidget(previousLyricLabel);
+    lyricPreviewLayout->addWidget(previousLyricLabel);
     auto currentLyricLabel = new CurrentLyricLabel;
-    mainLayout->addWidget(currentLyricLabel);
+    currentLyricLabel->setFont(font);
+    lyricPreviewLayout->addWidget(currentLyricLabel);
     auto nextLyricLabel = new CurrentLyricLabel;
     nextLyricLabel->setPalette(alternativePalette);
-    mainLayout->addWidget(nextLyricLabel);
+    nextLyricLabel->setFont(font);
+    lyricPreviewLayout->addWidget(nextLyricLabel);
 
     mainWidget->setLayout(mainLayout);
     setCentralWidget(mainWidget);
@@ -241,7 +274,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     setMenuBar(menuBar);
 
-    resize(800, 600);
+    resize(1200, 600);
 
     connect(m_document, &LyricDocument::dirtyChanged, this, &MainWindow::updateTitle);
     connect(m_document, &LyricDocument::fileNameChanged, this, &MainWindow::updateTitle);
@@ -253,6 +286,17 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(m_document->undoStack(), &QUndoStack::redoTextChanged, redoAction, [=](const QString &name) {
         redoAction->setText(tr("&Redo %1").arg(name));
     });
+
+    auto updateAllLyricLabels = [=] {
+        auto currentRow = m_document->findRowByTime(PlaybackController::instance()->positionTime());
+        previousLyricLabel->setRow(qMax(-1, currentRow - 1));
+        currentLyricLabel->setRow(currentRow);
+        nextLyricLabel->setRow(currentRow + 1);
+    };
+
+    connect(m_document->model(), &QAbstractItemModel::dataChanged, this, updateAllLyricLabels);
+    connect(m_document->model(), &QAbstractItemModel::rowsInserted, this, updateAllLyricLabels);
+    connect(m_document->model(), &QAbstractItemModel::rowsRemoved, this, updateAllLyricLabels);
 
     connect(m_selectionModel, &QItemSelectionModel::selectionChanged, this, [=] {
         auto flag = m_selectionModel->hasSelection();
@@ -267,17 +311,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         QSignalBlocker blocker(timeSlider);
         timeSlider->setValue(time);
         currentTimeLabel->setText(TimeValidator::timeToString(time));
-        auto currentRow = m_document->findRowByTime(time);
-        previousLyricLabel->setRow(qMax(-1, currentRow - 1));
-        currentLyricLabel->setRow(currentRow);
-        nextLyricLabel->setRow(currentRow + 1);
+        updateAllLyricLabels();
     });
     connect(timeSlider, &QSlider::valueChanged, playbackController, &PlaybackController::setPositionTime);
     connect(playbackController, &PlaybackController::audioFileNameChanged, this, [=](const QString &fileName) {
         audioFileNameLabel->setText(fileName);
         totalTimeLabel->setText(TimeValidator::timeToString(playbackController->audioLengthTime()));
         timeSlider->setMaximum(playbackController->audioLengthTime());
-
     });
 
     if (QApplication::arguments().isEmpty()) {
