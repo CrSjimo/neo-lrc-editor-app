@@ -71,7 +71,7 @@ public:
     }
 
     QVariant itemChange(GraphicsItemChange change, const QVariant &value) override {
-        if (change == ItemPositionChange) {
+        if (change == ItemPositionChange && m_timeBeforeDragging != -1) {
             auto newPos = value.toPointF();
             newPos.setX(qMax(newPos.x(), 0.0));
             newPos.setY(0);
@@ -180,6 +180,7 @@ protected:
             LyricDocument::instance()->pushEditCommand(index, newTime, m_timeBeforeDragging);
             LyricDocument::instance()->commitTransaction();
         }
+        m_timeBeforeDragging = -1;
         update();
     }
     void mouseDoubleClickEvent(QGraphicsSceneMouseEvent *event) override {
@@ -213,7 +214,7 @@ protected:
     }
 
 private:
-    int m_timeBeforeDragging = 0;
+    int m_timeBeforeDragging = -1;
 };
 
 class WaveformItem : public QGraphicsItem {
